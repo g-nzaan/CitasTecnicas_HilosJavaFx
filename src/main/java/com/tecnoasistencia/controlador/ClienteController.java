@@ -22,6 +22,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
@@ -241,19 +242,47 @@ public class ClienteController implements Initializable {
     }
 
     /**
+     * Construye un contenedor visual con ProgressIndicator y mensaje informativo
+     * para evidenciar visualmente en la interfaz que un hilo en segundo plano está trabajando.
+     */
+    private Node crearPlaceholderCargando(String mensaje) {
+        VBox box = new VBox(12);
+        box.setAlignment(Pos.CENTER);
+        ProgressIndicator pi = new ProgressIndicator();
+        pi.setMaxSize(40, 40);
+        Label lbl = new Label(mensaje);
+        lbl.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
+        lbl.setTextFill(Color.web("#64748b"));
+        box.getChildren().addAll(pi, lbl);
+        return box;
+    }
+
+    /**
      * Carga todos los clientes desde la base de datos a través de ClienteDAO en un hilo secundario
      * (javafx.concurrent.Task) para evitar congelar la interfaz gráfica (JavaFX Application Thread).
-     * Al completarse con éxito, actualiza el TableView y el contador en el hilo de UI (RF02, RF09).
+     * Muestra un ProgressIndicator visual en la tabla mientras se consulta la base de datos.
      */
     public void cargarClientes() {
+        if (tblClientes != null) {
+            tblClientes.setPlaceholder(crearPlaceholderCargando("Cargando clientes en segundo plano..."));
+        }
+        if (lblContador != null) {
+            lblContador.setText("Consultando base de datos en segundo plano (Hilo-Carga-Clientes)...");
+        }
+
         Task<ObservableList<Cliente>> tarea = new Task<>() {
             @Override
-            protected ObservableList<Cliente> call() {
+            protected ObservableList<Cliente> call() throws Exception {
+                // Pausa breve controlada (600ms) para evidenciar visualmente el hilo secundario y el ProgressIndicator
+                Thread.sleep(600);
                 return clienteDAO.listarClientes();
             }
         };
 
         tarea.setOnSucceeded(event -> {
+            if (tblClientes != null) {
+                tblClientes.setPlaceholder(new Label("No se encontraron clientes registrados o que coincidan con la búsqueda."));
+            }
             listaClientes.setAll(tarea.getValue());
             clientesFiltrados.setPredicate(c -> true);
             actualizarContador(clientesFiltrados.size());
@@ -261,6 +290,10 @@ public class ClienteController implements Initializable {
         });
 
         tarea.setOnFailed(event -> {
+            if (tblClientes != null) {
+                tblClientes.setPlaceholder(new Label("Error al consultar la base de datos."));
+            }
+            actualizarContador(clientesFiltrados.size());
             Throwable ex = tarea.getException();
             if (ex instanceof IllegalStateException) {
                 Alertas.errorDatos((IllegalStateException) ex);
@@ -511,16 +544,21 @@ public class ClienteController implements Initializable {
 
         Cliente nuevoCliente = new Cliente(nombres, apellidos, telefono, correo, activo);
         btnGuardar.setDisable(true);
+        if (lblContador != null) {
+            lblContador.setText("Registrando cliente en segundo plano (Hilo-Insertar-Cliente)...");
+        }
 
         Task<Boolean> tareaGuardar = new Task<>() {
             @Override
-            protected Boolean call() {
+            protected Boolean call() throws Exception {
+                Thread.sleep(400); // Pausa breve para evidenciar visualmente el hilo
                 return clienteDAO.insertarCliente(nuevoCliente);
             }
         };
 
         tareaGuardar.setOnSucceeded(e -> {
             btnGuardar.setDisable(false);
+            actualizarContador(clientesFiltrados.size());
             if (Boolean.TRUE.equals(tareaGuardar.getValue())) {
                 mostrarAlerta(Alert.AlertType.INFORMATION, "Operación Exitosa", "Cliente registrado exitosamente.");
                 txtBuscar.clear();
@@ -533,6 +571,7 @@ public class ClienteController implements Initializable {
 
         tareaGuardar.setOnFailed(e -> {
             btnGuardar.setDisable(false);
+            actualizarContador(clientesFiltrados.size());
             mostrarAlerta(Alert.AlertType.ERROR, "Error", "Error al registrar cliente: " + tareaGuardar.getException().getMessage());
         });
 
@@ -564,16 +603,21 @@ public class ClienteController implements Initializable {
 
         Cliente clienteModificado = new Cliente(id, nombres, apellidos, telefono, correo, activo);
         btnActualizar.setDisable(true);
+        if (lblContador != null) {
+            lblContador.setText("Actualizando cliente en segundo plano (Hilo-Actualizar-Cliente)...");
+        }
 
         Task<Boolean> tareaActualizar = new Task<>() {
             @Override
-            protected Boolean call() {
+            protected Boolean call() throws Exception {
+                Thread.sleep(400); // Pausa breve para evidenciar visualmente el hilo
                 return clienteDAO.actualizarCliente(clienteModificado);
             }
         };
 
         tareaActualizar.setOnSucceeded(e -> {
             btnActualizar.setDisable(false);
+            actualizarContador(clientesFiltrados.size());
             if (Boolean.TRUE.equals(tareaActualizar.getValue())) {
                 mostrarAlerta(Alert.AlertType.INFORMATION, "Operación Exitosa", "Cliente actualizado exitosamente.");
                 txtBuscar.clear();
@@ -586,6 +630,7 @@ public class ClienteController implements Initializable {
 
         tareaActualizar.setOnFailed(e -> {
             btnActualizar.setDisable(false);
+            actualizarContador(clientesFiltrados.size());
             mostrarAlerta(Alert.AlertType.ERROR, "Error", "Error al actualizar cliente: " + tareaActualizar.getException().getMessage());
         });
 
@@ -716,10 +761,14 @@ public class ClienteController implements Initializable {
             }
 
             btnEliminar.setDisable(true);
+            if (lblContador != null) {
+                lblContador.setText("Eliminando cliente en segundo plano (Hilo-Eliminar-Cliente)...");
+            }
 
             Task<Boolean> tareaEliminar = new Task<>() {
                 @Override
-                protected Boolean call() {
+                protected Boolean call() throws Exception {
+                    Thread.sleep(400); // Pausa breve para evidenciar visualmente el hilo
                     // Restricción: No se permite eliminar un cliente que tenga citas técnicas asociadas (RF08)
                     if (clienteDAO.tieneCitasAsociadas(id)) {
                         return null; // Bandera para indicar que existen citas asociadas
@@ -730,6 +779,7 @@ public class ClienteController implements Initializable {
 
             tareaEliminar.setOnSucceeded(e -> {
                 btnEliminar.setDisable(false);
+                actualizarContador(clientesFiltrados.size());
                 Boolean resultado = tareaEliminar.getValue();
                 if (resultado == null) {
                     mostrarAlerta(Alert.AlertType.WARNING, "Eliminación Restringida",
@@ -747,6 +797,7 @@ public class ClienteController implements Initializable {
 
             tareaEliminar.setOnFailed(e -> {
                 btnEliminar.setDisable(false);
+                actualizarContador(clientesFiltrados.size());
                 Throwable ex = tareaEliminar.getException();
                 if (ex instanceof IllegalStateException) {
                     Alertas.errorDatos((IllegalStateException) ex);

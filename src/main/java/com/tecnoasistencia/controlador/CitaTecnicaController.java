@@ -12,8 +12,11 @@ import javafx.collections.transformation.FilteredList;
 import javafx.collections.transformation.SortedList;
 import javafx.concurrent.Task;
 import javafx.fxml.FXML;
+import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
+import javafx.scene.layout.VBox;
 
 import java.sql.SQLException;
 import java.time.LocalDate;
@@ -146,15 +149,39 @@ public class CitaTecnicaController {
     }
 
     /**
+     * Construye un contenedor visual con ProgressIndicator y mensaje informativo
+     * para evidenciar visualmente en la tabla que un hilo secundario está trabajando.
+     */
+    private Node crearPlaceholderCargando(String mensaje) {
+        VBox box = new VBox(12);
+        box.setAlignment(Pos.CENTER);
+        ProgressIndicator pi = new ProgressIndicator();
+        pi.setMaxSize(40, 40);
+        Label lbl = new Label(mensaje);
+        lbl.setStyle("-fx-text-fill: #64748b; -fx-font-weight: bold; -fx-font-size: 13;");
+        box.getChildren().addAll(pi, lbl);
+        return box;
+    }
+
+    /**
      * Recarga la lista de clientes en el ComboBox y las citas en la tabla (RF03, RF09).
      * Ejecuta las consultas de base de datos en un hilo secundario (javafx.concurrent.Task)
-     * para mantener la interfaz de usuario fluida y reactiva.
+     * y muestra un ProgressIndicator en la tabla mientras se obtienen los registros.
      */
     @FXML
     public void cargarDatos() {
+        if (tblCitas != null) {
+            tblCitas.setPlaceholder(crearPlaceholderCargando("Cargando citas y clientes en segundo plano..."));
+        }
+        if (lblContador != null) {
+            lblContador.setText("Consultando base de datos en segundo plano (Hilo-Carga-Citas)...");
+        }
+
         Task<ResultadoCargaCitas> tarea = new Task<>() {
             @Override
             protected ResultadoCargaCitas call() throws Exception {
+                // Pausa breve controlada (600ms) para evidenciar visualmente el hilo secundario y el ProgressIndicator
+                Thread.sleep(600);
                 ObservableList<Cliente> clientesActuales = clienteDAO.listarClientes();
                 ObservableList<CitaTecnica> citasActuales = citaDAO.listarCitas();
                 return new ResultadoCargaCitas(clientesActuales, citasActuales);
@@ -162,6 +189,9 @@ public class CitaTecnicaController {
         };
 
         tarea.setOnSucceeded(e -> {
+            if (tblCitas != null) {
+                tblCitas.setPlaceholder(new Label("No hay citas registradas para los filtros seleccionados."));
+            }
             ResultadoCargaCitas resultado = tarea.getValue();
             cmbCliente.getItems().setAll(resultado.clientes());
             citas.setAll(resultado.citas());
@@ -169,6 +199,9 @@ public class CitaTecnicaController {
         });
 
         tarea.setOnFailed(e -> {
+            if (tblCitas != null) {
+                tblCitas.setPlaceholder(new Label("Error al consultar la base de datos."));
+            }
             Throwable ex = tarea.getException();
             if (ex instanceof SQLException || ex instanceof IllegalStateException) {
                 Alertas.errorDatos((Exception) ex);
@@ -273,10 +306,14 @@ public class CitaTecnicaController {
             } else {
                 btnGuardar.setDisable(true);
             }
+            if (lblContador != null) {
+                lblContador.setText((actualizar ? "Actualizando" : "Registrando") + " cita en segundo plano (Hilo-Guardar-Cita)...");
+            }
 
             Task<Boolean> tareaGuardar = new Task<>() {
                 @Override
                 protected Boolean call() throws Exception {
+                    Thread.sleep(400); // Pausa breve para evidenciar visualmente el hilo
                     // Regla de negocio: Prevenir colisión de citas (consulta en segundo plano)
                     if (citaDAO.existeCitaCliente(cita.getClienteId(), cita.getFecha(), cita.getHora(), cita.getId())) {
                         return null; // Conflicto detectado
@@ -294,6 +331,7 @@ public class CitaTecnicaController {
 
                 Boolean resultado = tareaGuardar.getValue();
                 if (resultado == null) {
+                    aplicarFiltros();
                     Alertas.mostrar(Alert.AlertType.WARNING, "Conflicto de Horario",
                             "El cliente '" + cita.getNombreCliente() + "' ya tiene una cita técnica agendada para el "
                                     + cita.getFechaFormateada() + " a las " + cita.getHoraFormateada()
@@ -302,6 +340,7 @@ public class CitaTecnicaController {
                 }
 
                 if (!resultado) {
+                    aplicarFiltros();
                     Alertas.mostrar(Alert.AlertType.WARNING, "Operación no completada",
                             "No se pudo completar la operación. El registro podría no existir en la base de datos.");
                     return;
@@ -320,6 +359,7 @@ public class CitaTecnicaController {
                 } else {
                     btnGuardar.setDisable(false);
                 }
+                aplicarFiltros();
                 Throwable ex = tareaGuardar.getException();
                 if (ex instanceof SQLException) {
                     Alertas.errorDatos((SQLException) ex);
@@ -353,10 +393,14 @@ public class CitaTecnicaController {
         }
 
         btnEliminar.setDisable(true);
+        if (lblContador != null) {
+            lblContador.setText("Eliminando cita en segundo plano (Hilo-Eliminar-Cita)...");
+        }
 
         Task<Boolean> tareaEliminar = new Task<>() {
             @Override
             protected Boolean call() throws Exception {
+                Thread.sleep(400); // Pausa breve para evidenciar visualmente el hilo
                 return citaDAO.eliminarCita(idEliminar);
             }
         };
@@ -369,6 +413,7 @@ public class CitaTecnicaController {
                 limpiarFormulario();
                 cargarDatos();
             } else {
+                aplicarFiltros();
                 Alertas.mostrar(Alert.AlertType.WARNING, "Registro No Encontrado",
                         "La cita ya no existe en la base de datos. Se actualizará la lista.");
                 cargarDatos();
@@ -377,6 +422,7 @@ public class CitaTecnicaController {
 
         tareaEliminar.setOnFailed(e -> {
             btnEliminar.setDisable(false);
+            aplicarFiltros();
             Throwable ex = tareaEliminar.getException();
             if (ex instanceof SQLException) {
                 Alertas.errorDatos((SQLException) ex);
