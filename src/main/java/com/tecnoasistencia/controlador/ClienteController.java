@@ -9,6 +9,7 @@ import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
 import javafx.collections.transformation.SortedList;
+import javafx.concurrent.Task;
 import javafx.event.ActionEvent;
 import javafx.fxml.FXML;
 import javafx.fxml.Initializable;
@@ -240,19 +241,37 @@ public class ClienteController implements Initializable {
     }
 
     /**
-     * Carga todos los clientes desde la base de datos a través de ClienteDAO
-     * y actualiza el TableView y el contador (RF02, RF09) con animación FadeTransition.
+     * Carga todos los clientes desde la base de datos a través de ClienteDAO en un hilo secundario
+     * (javafx.concurrent.Task) para evitar congelar la interfaz gráfica (JavaFX Application Thread).
+     * Al completarse con éxito, actualiza el TableView y el contador en el hilo de UI (RF02, RF09).
      */
     public void cargarClientes() {
-        try {
-            ObservableList<Cliente> desdeDB = clienteDAO.listarClientes();
-            listaClientes.setAll(desdeDB);
+        Task<ObservableList<Cliente>> tarea = new Task<>() {
+            @Override
+            protected ObservableList<Cliente> call() {
+                return clienteDAO.listarClientes();
+            }
+        };
+
+        tarea.setOnSucceeded(event -> {
+            listaClientes.setAll(tarea.getValue());
             clientesFiltrados.setPredicate(c -> true);
             actualizarContador(clientesFiltrados.size());
             animarCargaTabla();
-        } catch (IllegalStateException e) {
-            Alertas.errorDatos(e);
-        }
+        });
+
+        tarea.setOnFailed(event -> {
+            Throwable ex = tarea.getException();
+            if (ex instanceof IllegalStateException) {
+                Alertas.errorDatos((IllegalStateException) ex);
+            } else {
+                mostrarAlerta(Alert.AlertType.ERROR, "Error de Datos", "No se pudieron cargar los clientes: " + ex.getMessage());
+            }
+        });
+
+        Thread hilo = new Thread(tarea, "Hilo-Carga-Clientes");
+        hilo.setDaemon(true);
+        hilo.start();
     }
 
     /**
@@ -491,16 +510,35 @@ public class ClienteController implements Initializable {
         boolean activo = chkActivo.isSelected();
 
         Cliente nuevoCliente = new Cliente(nombres, apellidos, telefono, correo, activo);
-        boolean insertado = clienteDAO.insertarCliente(nuevoCliente);
+        btnGuardar.setDisable(true);
 
-        if (insertado) {
-            mostrarAlerta(Alert.AlertType.INFORMATION, "Operación Exitosa", "Cliente registrado exitosamente.");
-            txtBuscar.clear();
-            limpiarFormulario();
-            cargarClientes();
-        } else {
-            mostrarAlerta(Alert.AlertType.ERROR, "Error de Inserción", "No se pudo registrar el cliente. Verifique la conexión a la base de datos.");
-        }
+        Task<Boolean> tareaGuardar = new Task<>() {
+            @Override
+            protected Boolean call() {
+                return clienteDAO.insertarCliente(nuevoCliente);
+            }
+        };
+
+        tareaGuardar.setOnSucceeded(e -> {
+            btnGuardar.setDisable(false);
+            if (Boolean.TRUE.equals(tareaGuardar.getValue())) {
+                mostrarAlerta(Alert.AlertType.INFORMATION, "Operación Exitosa", "Cliente registrado exitosamente.");
+                txtBuscar.clear();
+                limpiarFormulario();
+                cargarClientes();
+            } else {
+                mostrarAlerta(Alert.AlertType.ERROR, "Error de Inserción", "No se pudo registrar el cliente. Verifique la conexión a la base de datos.");
+            }
+        });
+
+        tareaGuardar.setOnFailed(e -> {
+            btnGuardar.setDisable(false);
+            mostrarAlerta(Alert.AlertType.ERROR, "Error", "Error al registrar cliente: " + tareaGuardar.getException().getMessage());
+        });
+
+        Thread hilo = new Thread(tareaGuardar, "Hilo-Insertar-Cliente");
+        hilo.setDaemon(true);
+        hilo.start();
     }
 
     /**
@@ -525,16 +563,35 @@ public class ClienteController implements Initializable {
         boolean activo = chkActivo.isSelected();
 
         Cliente clienteModificado = new Cliente(id, nombres, apellidos, telefono, correo, activo);
-        boolean actualizado = clienteDAO.actualizarCliente(clienteModificado);
+        btnActualizar.setDisable(true);
 
-        if (actualizado) {
-            mostrarAlerta(Alert.AlertType.INFORMATION, "Operación Exitosa", "Cliente actualizado exitosamente.");
-            txtBuscar.clear();
-            limpiarFormulario();
-            cargarClientes();
-        } else {
-            mostrarAlerta(Alert.AlertType.ERROR, "Error de Actualización", "No se pudo actualizar el cliente. Verifique la conexión a la base de datos.");
-        }
+        Task<Boolean> tareaActualizar = new Task<>() {
+            @Override
+            protected Boolean call() {
+                return clienteDAO.actualizarCliente(clienteModificado);
+            }
+        };
+
+        tareaActualizar.setOnSucceeded(e -> {
+            btnActualizar.setDisable(false);
+            if (Boolean.TRUE.equals(tareaActualizar.getValue())) {
+                mostrarAlerta(Alert.AlertType.INFORMATION, "Operación Exitosa", "Cliente actualizado exitosamente.");
+                txtBuscar.clear();
+                limpiarFormulario();
+                cargarClientes();
+            } else {
+                mostrarAlerta(Alert.AlertType.ERROR, "Error de Actualización", "No se pudo actualizar el cliente. Verifique la conexión a la base de datos.");
+            }
+        });
+
+        tareaActualizar.setOnFailed(e -> {
+            btnActualizar.setDisable(false);
+            mostrarAlerta(Alert.AlertType.ERROR, "Error", "Error al actualizar cliente: " + tareaActualizar.getException().getMessage());
+        });
+
+        Thread hilo = new Thread(tareaActualizar, "Hilo-Actualizar-Cliente");
+        hilo.setDaemon(true);
+        hilo.start();
     }
 
     /**
@@ -658,23 +715,50 @@ public class ClienteController implements Initializable {
                 return;
             }
 
-            // Restricción: No se permite eliminar un cliente que tenga citas técnicas asociadas (RF08)
-            if (clienteDAO.tieneCitasAsociadas(id)) {
-                mostrarAlerta(Alert.AlertType.WARNING, "Eliminación Restringida",
-                        "No se puede eliminar el cliente '" + nombreCompleto + "' porque tiene citas técnicas registradas en el sistema.\n\n"
-                                + "Para proceder con la eliminación física del cliente, primero debe eliminar las citas técnicas asociadas; cancelarlas no elimina la relación.");
-                return;
-            }
+            btnEliminar.setDisable(true);
 
-            boolean eliminado = clienteDAO.eliminarCliente(id);
-            if (eliminado) {
-                mostrarAlerta(Alert.AlertType.INFORMATION, "Operación Exitosa", "Cliente eliminado exitosamente.");
-                txtBuscar.clear();
-                limpiarFormulario();
-                cargarClientes();
-            } else {
-                mostrarAlerta(Alert.AlertType.ERROR, "Error de Eliminación", "No se pudo eliminar el cliente. Ocurrió un error en la base de datos.");
-            }
+            Task<Boolean> tareaEliminar = new Task<>() {
+                @Override
+                protected Boolean call() {
+                    // Restricción: No se permite eliminar un cliente que tenga citas técnicas asociadas (RF08)
+                    if (clienteDAO.tieneCitasAsociadas(id)) {
+                        return null; // Bandera para indicar que existen citas asociadas
+                    }
+                    return clienteDAO.eliminarCliente(id);
+                }
+            };
+
+            tareaEliminar.setOnSucceeded(e -> {
+                btnEliminar.setDisable(false);
+                Boolean resultado = tareaEliminar.getValue();
+                if (resultado == null) {
+                    mostrarAlerta(Alert.AlertType.WARNING, "Eliminación Restringida",
+                            "No se puede eliminar el cliente '" + nombreCompleto + "' porque tiene citas técnicas registradas en el sistema.\n\n"
+                                    + "Para proceder con la eliminación física del cliente, primero debe eliminar las citas técnicas asociadas; cancelarlas no elimina la relación.");
+                } else if (resultado) {
+                    mostrarAlerta(Alert.AlertType.INFORMATION, "Operación Exitosa", "Cliente eliminado exitosamente.");
+                    txtBuscar.clear();
+                    limpiarFormulario();
+                    cargarClientes();
+                } else {
+                    mostrarAlerta(Alert.AlertType.ERROR, "Error de Eliminación", "No se pudo eliminar el cliente. Ocurrió un error en la base de datos.");
+                }
+            });
+
+            tareaEliminar.setOnFailed(e -> {
+                btnEliminar.setDisable(false);
+                Throwable ex = tareaEliminar.getException();
+                if (ex instanceof IllegalStateException) {
+                    Alertas.errorDatos((IllegalStateException) ex);
+                } else {
+                    mostrarAlerta(Alert.AlertType.ERROR, "Error de Eliminación", "Ocurrió un error en la base de datos: " + ex.getMessage());
+                }
+            });
+
+            Thread hilo = new Thread(tareaEliminar, "Hilo-Eliminar-Cliente");
+            hilo.setDaemon(true);
+            hilo.start();
+
         } catch (IllegalStateException e) {
             Alertas.errorDatos(e);
         }
