@@ -106,17 +106,17 @@
                             <children>
                                 <HBox spacing="10.0" alignment="CENTER">
                                     <children>
-                                        <Button fx:id="btnGuardar" text="Guardar" maxWidth="Infinity" HBox.hgrow="ALWAYS"
+                                        <Button fx:id="btnGuardar" text="Guardar" prefWidth="160.0" prefHeight="36.0" maxWidth="Infinity" HBox.hgrow="ALWAYS"
                                                 onAction="#handleGuardar"/>
-                                        <Button fx:id="btnActualizar" text="Actualizar" disable="true" maxWidth="Infinity" HBox.hgrow="ALWAYS"
+                                        <Button fx:id="btnActualizar" text="Actualizar" disable="true" prefWidth="160.0" prefHeight="36.0" maxWidth="Infinity" HBox.hgrow="ALWAYS"
                                                 onAction="#handleActualizar"/>
                                     </children>
                                 </HBox>
                                 <HBox spacing="10.0" alignment="CENTER">
                                     <children>
-                                        <Button fx:id="btnEliminar" text="Eliminar" disable="true" maxWidth="Infinity" HBox.hgrow="ALWAYS"
+                                        <Button fx:id="btnEliminar" text="Eliminar" disable="true" prefWidth="160.0" prefHeight="36.0" maxWidth="Infinity" HBox.hgrow="ALWAYS"
                                                 onAction="#handleEliminar"/>
-                                        <Button fx:id="btnLimpiar" text="Limpiar" maxWidth="Infinity" HBox.hgrow="ALWAYS"
+                                        <Button fx:id="btnLimpiar" text="Limpiar" prefWidth="160.0" prefHeight="36.0" maxWidth="Infinity" HBox.hgrow="ALWAYS"
                                                 onAction="#handleLimpiar"/>
                                     </children>
                                 </HBox>
@@ -136,9 +136,9 @@
                             <children>
                                 <Label fx:id="lblBuscar" text="Búsqueda:"/>
                                 <TextField fx:id="txtBuscar" promptText="Buscar por nombres, apellidos o correo..."
-                                           HBox.hgrow="ALWAYS" onAction="#handleBuscar"/>
-                                <Button fx:id="btnBuscar" text="Buscar" onAction="#handleBuscar"/>
-                                <Button fx:id="btnLimpiarBusqueda" text="Restablecer" onAction="#handleLimpiarBusqueda"/>
+                                           prefHeight="36.0" HBox.hgrow="ALWAYS" onAction="#handleBuscar"/>
+                                <Button fx:id="btnBuscar" text="Buscar" prefHeight="36.0" onAction="#handleBuscar"/>
+                                <Button fx:id="btnLimpiarBusqueda" text="Restablecer" prefHeight="36.0" onAction="#handleLimpiarBusqueda"/>
                             </children>
                         </HBox>
 
