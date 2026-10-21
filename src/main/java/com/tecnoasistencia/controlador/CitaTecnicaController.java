@@ -10,6 +10,7 @@ import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
 import javafx.collections.transformation.SortedList;
+import javafx.concurrent.Task;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import javafx.scene.control.cell.PropertyValueFactory;
@@ -146,20 +147,42 @@ public class CitaTecnicaController {
 
     /**
      * Recarga la lista de clientes en el ComboBox y las citas en la tabla (RF03, RF09).
+     * Ejecuta las consultas de base de datos en un hilo secundario (javafx.concurrent.Task)
+     * para mantener la interfaz de usuario fluida y reactiva.
      */
     @FXML
     public void cargarDatos() {
-        try {
-            ObservableList<Cliente> clientesActuales = clienteDAO.listarClientes();
-            ObservableList<CitaTecnica> citasActuales = citaDAO.listarCitas();
+        Task<ResultadoCargaCitas> tarea = new Task<>() {
+            @Override
+            protected ResultadoCargaCitas call() throws Exception {
+                ObservableList<Cliente> clientesActuales = clienteDAO.listarClientes();
+                ObservableList<CitaTecnica> citasActuales = citaDAO.listarCitas();
+                return new ResultadoCargaCitas(clientesActuales, citasActuales);
+            }
+        };
 
-            cmbCliente.getItems().setAll(clientesActuales);
-            citas.setAll(citasActuales);
+        tarea.setOnSucceeded(e -> {
+            ResultadoCargaCitas resultado = tarea.getValue();
+            cmbCliente.getItems().setAll(resultado.clientes());
+            citas.setAll(resultado.citas());
             aplicarFiltros();
-        } catch (SQLException | IllegalStateException e) {
-            Alertas.errorDatos(e);
-        }
+        });
+
+        tarea.setOnFailed(e -> {
+            Throwable ex = tarea.getException();
+            if (ex instanceof SQLException || ex instanceof IllegalStateException) {
+                Alertas.errorDatos((Exception) ex);
+            } else {
+                Alertas.mostrar(Alert.AlertType.ERROR, "Error de Datos", "Error al cargar citas: " + ex.getMessage());
+            }
+        });
+
+        Thread hilo = new Thread(tarea, "Hilo-Carga-Citas");
+        hilo.setDaemon(true);
+        hilo.start();
     }
+
+    private record ResultadoCargaCitas(ObservableList<Cliente> clientes, ObservableList<CitaTecnica> citas) {}
 
     private void cargarFormulario(CitaTecnica cita) {
         idSeleccionado = cita.getId();
@@ -236,15 +259,6 @@ public class CitaTecnicaController {
 
             CitaTecnica cita = leerFormulario();
 
-            // Regla de negocio: Prevenir colisión de citas (doble cita al mismo cliente en la misma fecha y hora)
-            if (citaDAO.existeCitaCliente(cita.getClienteId(), cita.getFecha(), cita.getHora(), cita.getId())) {
-                Alertas.mostrar(Alert.AlertType.WARNING, "Conflicto de Horario",
-                        "El cliente '" + cita.getNombreCliente() + "' ya tiene una cita técnica agendada para el "
-                                + cita.getFechaFormateada() + " a las " + cita.getHoraFormateada()
-                                + ".\n\nPor favor asigne un horario o fecha diferente para evitar colisión de citas.");
-                return;
-            }
-
             String accion = actualizar ? "actualizar" : "registrar";
             String mensajeConfirmacion = "¿Desea " + accion + " la cita para el cliente "
                     + cita.getNombreCliente() + " el día " + cita.getFechaFormateada()
@@ -254,23 +268,72 @@ public class CitaTecnicaController {
                 return;
             }
 
-            boolean exito = actualizar ? citaDAO.actualizarCita(cita) : citaDAO.insertarCita(cita);
-
-            if (!exito) {
-                Alertas.mostrar(Alert.AlertType.WARNING, "Operación no completada",
-                        "No se pudo completar la operación. El registro podría no existir en la base de datos.");
-                return;
+            if (actualizar) {
+                btnActualizar.setDisable(true);
+            } else {
+                btnGuardar.setDisable(true);
             }
 
-            Alertas.mostrar(Alert.AlertType.INFORMATION, "Operación Exitosa",
-                    "Cita técnica " + (actualizar ? "actualizada" : "registrada") + " correctamente.");
+            Task<Boolean> tareaGuardar = new Task<>() {
+                @Override
+                protected Boolean call() throws Exception {
+                    // Regla de negocio: Prevenir colisión de citas (consulta en segundo plano)
+                    if (citaDAO.existeCitaCliente(cita.getClienteId(), cita.getFecha(), cita.getHora(), cita.getId())) {
+                        return null; // Conflicto detectado
+                    }
+                    return actualizar ? citaDAO.actualizarCita(cita) : citaDAO.insertarCita(cita);
+                }
+            };
 
-            limpiarFormulario();
-            cargarDatos();
+            tareaGuardar.setOnSucceeded(e -> {
+                if (actualizar) {
+                    btnActualizar.setDisable(false);
+                } else {
+                    btnGuardar.setDisable(false);
+                }
+
+                Boolean resultado = tareaGuardar.getValue();
+                if (resultado == null) {
+                    Alertas.mostrar(Alert.AlertType.WARNING, "Conflicto de Horario",
+                            "El cliente '" + cita.getNombreCliente() + "' ya tiene una cita técnica agendada para el "
+                                    + cita.getFechaFormateada() + " a las " + cita.getHoraFormateada()
+                                    + ".\n\nPor favor asigne un horario o fecha diferente para evitar colisión de citas.");
+                    return;
+                }
+
+                if (!resultado) {
+                    Alertas.mostrar(Alert.AlertType.WARNING, "Operación no completada",
+                            "No se pudo completar la operación. El registro podría no existir en la base de datos.");
+                    return;
+                }
+
+                Alertas.mostrar(Alert.AlertType.INFORMATION, "Operación Exitosa",
+                        "Cita técnica " + (actualizar ? "actualizada" : "registrada") + " correctamente.");
+
+                limpiarFormulario();
+                cargarDatos();
+            });
+
+            tareaGuardar.setOnFailed(e -> {
+                if (actualizar) {
+                    btnActualizar.setDisable(false);
+                } else {
+                    btnGuardar.setDisable(false);
+                }
+                Throwable ex = tareaGuardar.getException();
+                if (ex instanceof SQLException) {
+                    Alertas.errorDatos((SQLException) ex);
+                } else {
+                    Alertas.mostrar(Alert.AlertType.ERROR, "Error", "Error al procesar la cita: " + ex.getMessage());
+                }
+            });
+
+            Thread hilo = new Thread(tareaGuardar, "Hilo-Guardar-Cita");
+            hilo.setDaemon(true);
+            hilo.start();
+
         } catch (IllegalArgumentException e) {
             Alertas.mostrar(Alert.AlertType.WARNING, "Validación de Formulario", e.getMessage());
-        } catch (SQLException e) {
-            Alertas.errorDatos(e);
         }
     }
 
@@ -282,15 +345,27 @@ public class CitaTecnicaController {
             return;
         }
 
+        int idEliminar = idSeleccionado;
+
         if (!Alertas.confirmar("Confirmar Eliminación",
-                "¿Está seguro de eliminar permanentemente la cita técnica #" + idSeleccionado + "?")) {
+                "¿Está seguro de eliminar permanentemente la cita técnica #" + idEliminar + "?")) {
             return;
         }
 
-        try {
-            if (citaDAO.eliminarCita(idSeleccionado)) {
+        btnEliminar.setDisable(true);
+
+        Task<Boolean> tareaEliminar = new Task<>() {
+            @Override
+            protected Boolean call() throws Exception {
+                return citaDAO.eliminarCita(idEliminar);
+            }
+        };
+
+        tareaEliminar.setOnSucceeded(e -> {
+            btnEliminar.setDisable(false);
+            if (Boolean.TRUE.equals(tareaEliminar.getValue())) {
                 Alertas.mostrar(Alert.AlertType.INFORMATION, "Operación Exitosa",
-                        "Cita técnica #" + idSeleccionado + " eliminada permanentemente.");
+                        "Cita técnica #" + idEliminar + " eliminada permanentemente.");
                 limpiarFormulario();
                 cargarDatos();
             } else {
@@ -298,9 +373,21 @@ public class CitaTecnicaController {
                         "La cita ya no existe en la base de datos. Se actualizará la lista.");
                 cargarDatos();
             }
-        } catch (SQLException e) {
-            Alertas.errorDatos(e);
-        }
+        });
+
+        tareaEliminar.setOnFailed(e -> {
+            btnEliminar.setDisable(false);
+            Throwable ex = tareaEliminar.getException();
+            if (ex instanceof SQLException) {
+                Alertas.errorDatos((SQLException) ex);
+            } else {
+                Alertas.mostrar(Alert.AlertType.ERROR, "Error", "Error al eliminar la cita: " + ex.getMessage());
+            }
+        });
+
+        Thread hilo = new Thread(tareaEliminar, "Hilo-Eliminar-Cita");
+        hilo.setDaemon(true);
+        hilo.start();
     }
 
     @FXML
